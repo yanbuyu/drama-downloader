@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""番茄短剧 Python 直连版：独立搜索、设备注册与池化、V5取流、多线程下载。
+"""红果短剧 Python 直连版：独立搜索、设备注册与池化、V5取流、多线程下载。
 
 基于 ch6vip/novel-sound（GPL-3.0）公开源码移植；不依赖原App、Rust或Frida。
 依赖：pip install -r requirements.txt；自动查找系统 ffmpeg 或 imageio-ffmpeg 内置可执行文件。
@@ -528,7 +528,7 @@ class Downloader:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="独立 Python 番茄短剧下载器（不依赖Rust/Frida/原App）")
+    parser = argparse.ArgumentParser(description="独立 Python 红果短剧下载器（不依赖Rust/Frida/原App）")
     parser.add_argument("--pool", default="device_pool.json", help="设备池JSON（默认 device_pool.json；可导入原项目未加密的池）")
     parser.add_argument("--out", default="downloads", help="视频保存目录")
     parser.add_argument("--devices", type=int, default=2, help="自动维护的有效设备数量，默认2")
