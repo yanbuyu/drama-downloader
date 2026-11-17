@@ -29,8 +29,8 @@ class H(BaseHTTPRequestHandler):
    return self.respond({'code':0,'data':{'10001':{'video_data':{
        'series_id_str':'10001','series_title':'测试短剧','episode_cnt':2,
        'series_intro':'测试简介','video_list':[
-           {'vid':'20002','vid_index':2,'title':'第2集'},
-           {'vid':'20001','vid_index':1,'title':'第1集'}
+           {'vid':'20002','vid_index':2,'title':'结婚三年，女主遭到丈夫冷落，决定带着两个孩子离开原来的生活，重新开始'},
+           {'vid':'20001','vid_index':1,'title':'结婚三年，女主遭到丈夫冷落，决定带着两个孩子离开原来的生活，重新开始'}
        ]}}}})
   if u.path=='/novel/player/video_detail/v1/':
    assert self.headers.get('x-argus'),self.headers
