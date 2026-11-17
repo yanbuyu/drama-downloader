@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""番茄短剧直连上游的 Python 客户端 (GPL-3.0)，无需什锦铺 App/Rust/Frida。
+"""红果短剧直连上游的 Python 客户端 (GPL-3.0)，无需什锦铺 App/Rust/Frida。
 移植自 https://github.com/ch6vip/novel-sound 的注册、搜索、目录、详情和 V5 取流。
 上游协议随时可能变动；不触及账号付费权限，也不会把错误回包当成功。
 """
