@@ -118,7 +118,7 @@ def register_device(*, mock_origin: str|None=None, timeout=20)->dict:
         raise DirectError(f'设备注册失败: {e}') from e
     device_id=str(j.get('device_id_str') or j.get('device_id') or '')
     install_id=str(j.get('install_id_str') or j.get('install_id') or '')
-    if not device_id.isdigit() or not install_id.isdigit():
+    if not device_id.strip() or not install_id.strip():
         raise DirectError(f'设备注册未返回有效ID，响应状态：{str(j.get("message") or j.get("error") or j.get("code"))[:200]}')
     return {'device_id':device_id,'install_id':install_id,'cdid':dev['cdid'],
             'openudid':dev['openudid'],'status':'active','registered_version_code':VERSION,
@@ -140,7 +140,7 @@ class DevicePool:
             raw=value.get('android',[]) if isinstance(value,dict) else value
             if not isinstance(raw,list): raise DirectError('设备池 JSON 非数组')
             self._devices=[dict(d) for d in raw if isinstance(d,dict)
-                  and str(d.get('device_id','')).isdigit() and str(d.get('install_id','')).isdigit()
+                  and str(d.get('device_id','')).strip() and str(d.get('install_id','')).strip()
                   and d.get('status','active')=='active']
 
     def _save(self):
@@ -154,7 +154,7 @@ class DevicePool:
 
     def ensure(self, count=None):
         n=self.desired if count is None else count
-        if not 1<=n<=10: raise DirectError('设备池数量需在 1–10')
+        if not 1<=n<=20: raise DirectError('设备池数量需在 1–20')
         with self._lock:
             while len(self._devices)<n:
                 device=register_device(mock_origin=self.mock_origin)
