@@ -21,6 +21,17 @@ class H(BaseHTTPRequestHandler):
   if u.path=='/service/2/device_register/':
    assert data[:6]==bytes.fromhex('746305100000'),data[:8]
    return self.respond({'device_id_str':str(time.time_ns())[:18], 'install_id_str':str(time.time_ns())[1:18]})
+  if u.path=='/novel/player/multi_video_detail/preload/v1':
+   payload=json.loads(data)
+   assert payload['series_id']=='10001',payload
+   assert payload['dr_scene']=='preload',payload
+   assert self.headers.get('x-argus'),self.headers
+   return self.respond({'code':0,'data':{'10001':{'video_data':{
+       'series_id_str':'10001','series_title':'测试短剧','episode_cnt':2,
+       'series_intro':'测试简介','video_list':[
+           {'vid':'20002','vid_index':2,'title':'第2集'},
+           {'vid':'20001','vid_index':1,'title':'第1集'}
+       ]}}}})
   if u.path=='/novel/player/video_detail/v1/':
    assert self.headers.get('x-argus'),self.headers
    return self.respond({'code':0,'data':{'video_data':{'series_id_str':'10001','series_title':'测试短剧','episode_cnt':2,'series_intro':'测试简介','celebrities':[{'nickname':'张三','role_name':'甲'}]}}})
@@ -41,7 +52,7 @@ class H(BaseHTTPRequestHandler):
    return self.respond({'code':0,'data':{'search_tabs':[{'tab_type':11,'title':'短剧','data':[{'series_id_str':'10001','video_data':[{'video_id':'20001','series_title':'测试短剧','episode_cnt':2}]}]}]}})
   if u.path=='/reading/bookapi/directory/all_items/v':
    assert self.headers.get('x-argus')
-   return self.respond({'code':0,'data':{'episodes':[{'video_id':'20001','episode_title':'第1集'},{'video_id':'20002','episode_title':'第2集'}]}})
+   return self.respond({'code':0,'data':{'episodes':[{'video_id':'39901','episode_title':'第110集'},{'video_id':'39902','episode_title':'第111集'}]}})
   if u.path=='/plain.mp4':
    b=VIDEO_FILE.read_bytes();offset=0;rang=self.headers.get('Range','')
    if rang.startswith('bytes='):
