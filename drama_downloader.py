@@ -250,8 +250,6 @@ def parse_range(spec: str, total: int) -> list[int]:
 def choose_variant(source: dict, quality: str) -> dict:
     variants = [v for v in source.get("variants", []) if isinstance(v, dict) and v.get("url")]
     if not variants:
-        if quality != "best":
-            raise DramaError("上游仅提供单流，无法确认指定清晰度")
         u = source.get("video_url", "")
         if not u:
             raise DramaError("视频接口没有返回可用地址")
@@ -266,7 +264,7 @@ def choose_variant(source: dict, quality: str) -> dict:
         return max(known, key=lambda v: v["_quality"]) if known else variants[0]
     goal = int(quality)
     if not known:
-        raise DramaError("视频接口未给清晰度信息，无法按指定画质下载")
+        return variants[0]
     eligible = [v for v in known if v["_quality"] <= goal]
     return max(eligible, key=lambda v: v["_quality"]) if eligible else min(known, key=lambda v: v["_quality"])
 
@@ -494,17 +492,13 @@ class Downloader:
         Path(str(part) + ".json").unlink(missing_ok=True)
         return f"[{ep.number}] 完成：{output.name} ({transferred / 1048576:.1f}MiB / {resolution})"
 
-    def download(self, series_id: str, spec: str, *, include_disabled: bool = False):
+    def download(self, series_id: str, spec: str):
         info, episodes = self.details(series_id)
         folder = self.save_metadata(info)
         numbers = parse_range(spec, len(episodes))
         selected = [episodes[n - 1] for n in numbers]
-        omitted = [x.number for x in selected if x.disabled and not include_disabled]
-        selected = [x for x in selected if include_disabled or not x.disabled]
         self.log(f"剧名：{info.get('title')} | 全 {len(episodes)} 集 | 下载 {len(selected)} 集 | 线程 {self.workers} | 清晰度 {self.quality}")
         self.log(f"保存目录：{folder}")
-        if omitted:
-            self.log(f"跳过平台标为不可播放的剧集：{omitted}")
         failed = []
         finished = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
@@ -531,7 +525,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="独立 Python 红果短剧下载器（不依赖Rust/Frida/原App）")
     parser.add_argument("--pool", default="device_pool.json", help="设备池JSON（默认 device_pool.json；可导入原项目未加密的池）")
     parser.add_argument("--out", default="downloads", help="视频保存目录")
-    parser.add_argument("--devices", type=int, default=2, help="自动维护的有效设备数量，默认2")
+    parser.add_argument("--devices", type=int, default=5, help="自动维护的有效设备数量，默认5（原仓库最多20）")
     parser.add_argument("--mock-origin", help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="离线运行协议签名/加密固定向量测试")
@@ -545,17 +539,20 @@ def main(argv=None) -> int:
     dl = sub.add_parser("download", help="指定集数范围和画质，多线程下载MP4")
     dl.add_argument("series_id")
     dl.add_argument("--episodes", default="all", help="集数范围：1-10,12,20- 或 all")
-    dl.add_argument("--quality", choices=("best", "360", "480", "540", "720", "1080", "1440", "2160"), default="best")
+    dl.add_argument("--quality", default="best", help="best 或目标短边像素数，例如 720、1080、1440")
     dl.add_argument("--workers", type=int, default=4, help="并发下载集数，默认4")
     dl.add_argument("--raw", action="store_true", help="保存未经处理的原始缓存（可能为CENC加密）")
-    dl.add_argument("--include-disabled", action="store_true", help="尝试下载目录标为不可播的剧集（不解除访问限制）")
+    dl.add_argument("--include-disabled", action="store_true", help=argparse.SUPPRESS)  # 旧参数兼容；不再预过滤剧集
     args = parser.parse_args(argv)
     if getattr(args, "workers", 4) < 1:
         parser.error("--workers 必须大于 0")
     if getattr(args, "pages", 1) < 1:
         parser.error("--pages 必须大于 0")
-    if args.devices < 1:
-        parser.error("--devices 必须大于 0")
+    if not 1 <= args.devices <= 20:
+        parser.error("--devices 必须在 1–20 之间（同原仓库上限）")
+    if args.command == "download" and args.quality != "best":
+        if not args.quality.isascii() or not args.quality.isdecimal() or int(args.quality) <= 0:
+            parser.error("--quality 必须为 best 或正整数（目标短边像素数）")
     devices = DevicePool(args.pool, desired=args.devices, mock_origin=args.mock_origin)
     if args.command == "selftest":
         from drama_sign import sm3, simon_enc, ladon, _sm3_python
@@ -607,7 +604,7 @@ def main(argv=None) -> int:
             print(f"{ep.number:03d}. {ep.title} ({ep.id}){' [不可播]' if ep.disabled else ''}")
         print("元数据：" + str(loc / "series.json"))
         return 0
-    return app.download(args.series_id, args.episodes, include_disabled=args.include_disabled)
+    return app.download(args.series_id, args.episodes)
 
 
 if __name__ == "__main__":
