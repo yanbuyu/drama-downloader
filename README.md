@@ -64,8 +64,18 @@ python drama_downloader.py --pool saved_devices.json --out output --devices 4 do
 - `drama_sign.py`：原生 Argus 551 / Ladon / Simon / SM3 / TT 加密核心。
 - `drama_v5.py`：V5 播放请求签名、Medusa/Helios。
 - `drama_v5_tables.py`：V5 查找表常量。
-- `tests/test_standalone.py`：本地模拟上游全链路测试（读取 `tests/plain.mp4` 测试片）。
+- `tests/test_standalone.py`：本地模拟上游全链路测试（运行时自动生成测试 MP4）。
 - `LICENSE`：GPL-3.0。
+
+## 本地测试
+
+```bash
+python drama_downloader.py selftest
+python tests/test_standalone.py
+python -m unittest discover -s tests -p test_ffmpeg_fallback.py -v
+```
+
+测试视频运行时生成，不含第三方短剧视频样本；模拟上游测试不需要原应用、Rust 后端或真实设备。
 
 ## 已测试与未测试
 
