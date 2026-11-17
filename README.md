@@ -62,7 +62,7 @@ python drama_downloader.py --pool devices.json --out downloads --devices 5 downl
 | `--out` | 输出目录，默认 `downloads` |
 | `--raw` | 保存未经处理的原始视频数据 |
 
-设备首次使用时自动注册，信息保存在 `device_pool.json`；无需手动注册。下载时不预先跳过目录中带状态标记的剧集，实际能否取流由上游决定。单流视频可在指定画质时直接下载。下载失败会保留 `.part` 缓存，重新执行相同命令即可续传或继续处理。
+设备首次使用时自动注册，信息保存在 `device_pool.json`；无需手动注册。下载使用短剧专用详情接口的 `vid_index` 对应真实集数，不以小说目录返回顺序冒充集号。历史版本产生的 `001-第110集` 这类错号视频会移至 `_wrong_episode_backup/` 保留，再下载正确集数。下载失败保留 `.part` 缓存，重新执行相同命令即可续传。
 
 ## 参考项目与开源许可
 
