@@ -83,6 +83,9 @@ class DirectPoolAdapter:
         if path == "/api/v1/search":
             return self.client.search(str(params.get('query', '')), int(params.get('offset', 0)),
                                       int(params.get('count', 10)))
+        m = re.fullmatch(r'/api/v1/series/(\d+)/episodes', path)
+        if m:
+            return self.client.video_series(m.group(1))
         m = re.fullmatch(r'/api/v1/series/(\d+)', path)
         if m:
             return self.client.info(m.group(1))
@@ -168,6 +171,63 @@ def parse_episodes(data: Any) -> list[Episode]:
     return result
 
 
+
+def parse_short_drama_episodes(payload: dict, series_id: str) -> list[Episode]:
+    """Parse the short-drama video_list using real vid_index, never list position."""
+    data = payload.get('data') if isinstance(payload, dict) else None
+    series = data.get(str(series_id)) if isinstance(data, dict) else None
+    video = series.get('video_data') if isinstance(series, dict) else None
+    rows = video.get('video_list') if isinstance(video, dict) else None
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    if not isinstance(rows, list) or not rows:
+        raise DramaError('短剧接口没有返回 video_list，无法确定真实集号')
+    parsed = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        vid = first(row, ('vid', 'video_id', 'item_id'))
+        raw_index = row.get('vid_index')
+        if not vid or raw_index is None:
+            continue
+        try:
+            index = int(raw_index)
+        except (ValueError, TypeError):
+            continue
+        title = first(row, ('title', 'episode_title', 'name'), '')
+        try:
+            duration = int(row.get('duration') or 0)
+        except (ValueError, TypeError):
+            duration = 0
+        parsed.append((index, str(vid), title, duration, row))
+    if not parsed:
+        raise DramaError('短剧接口没有有效的 vid / vid_index 对应关系')
+    indices = [x[0] for x in parsed]
+    if min(indices) == 0 and set(indices) == set(range(len(indices))):
+        offset = 1   # Only accept an unambiguous, fully zero-based index sequence.
+    else:
+        offset = 0
+    episodes = []
+    seen_numbers = set()
+    seen_videos = set()
+    for index, vid, title, duration, row in sorted(parsed, key=lambda x: x[0]):
+        number = index + offset
+        if number < 1 or number in seen_numbers or vid in seen_videos:
+            raise DramaError('短剧集号重复或不合法，拒绝错位下载')
+        seen_numbers.add(number)
+        seen_videos.add(vid)
+        # vid_index is authoritative. A generic numbering title must not
+        # contradict it; retain actual descriptive episode titles as-is.
+        title_match = re.fullmatch(r'第\s*(\d+)\s*集', title)
+        if title_match and int(title_match.group(1)) != number:
+            title = f'第{number}集'
+        if not title:
+            title = f'第{number}集'
+        trailer = str(row.get('is_preview_material', row.get('is_trailer', False))).lower() in ('true', '1')
+        disabled = str(row.get('disable_play', row.get('disablePlay', False))).lower() in ('true', '1')
+        episodes.append(Episode(number, vid, title, disabled, trailer, duration))
+    return episodes
+
 def parse_search(data: dict) -> list[dict]:
     inner = data.get("data", data)
     tabs = inner.get("search_tabs", []) if isinstance(inner, dict) else []
@@ -208,7 +268,9 @@ def parse_search(data: dict) -> list[dict]:
 
 def parse_series_info(result: dict, fallback_id: str) -> dict:
     data = result.get("data", {})
-    video = data.get("video_data", {}) if isinstance(data, dict) else {}
+    video = ((data.get(str(fallback_id)) or {}).get("video_data")
+             if isinstance(data, dict) and isinstance(data.get(str(fallback_id)), dict)
+             else data.get("video_data", {}) if isinstance(data, dict) else {})
     if not isinstance(video, dict):
         video = {}
     casts = []
@@ -415,27 +477,35 @@ class Downloader:
             print(message, flush=True)
 
     def details(self, series_id: str):
-        info = {}
-        try:
-            info = parse_series_info(self.pool.request(f"/api/v1/series/{series_id}"), series_id)
-        except DramaError as e:
-            self.log(f"[信息] 详情接口暂不可用：{e}")
-        episodes = []
-        errors = []
-        for path in (f"/api/v1/books/{series_id}/directory", f"/api/v1/manga/videos/{series_id}"):
-            try:
-                episodes = parse_episodes(self.pool.request(path))
-                if episodes:
-                    break
-            except DramaError as e:
-                errors.append(str(e))
-        if not episodes:
-            raise DramaError("无法获取短剧目录：" + "; ".join(errors))
+        # The reading/bookapi/directory endpoint is for novel chapters.
+        # Its positional list is not trustworthy for short-drama episodes.
+        payload = self.pool.request(f"/api/v1/series/{series_id}/episodes")
+        episodes = parse_short_drama_episodes(payload, series_id)
+        info = parse_series_info(payload, series_id)
         info.setdefault("series_id", series_id)
         info.setdefault("title", series_id)
         info["episodes"] = [asdict(ep) for ep in episodes]
         info["episode_count_directory"] = len(episodes)
         return info, episodes
+
+    def backup_mismatched_legacy_files(self, folder: Path, numbers: set[int]):
+        """Preserve previous index/title-mismatched MP4s without treating as valid episodes."""
+        for file in folder.glob('*.mp4'):
+            match = re.fullmatch(r'(\d+)-第(\d+)集\[[^\]]+\]\.mp4', file.name)
+            if not match:
+                continue
+            index, title_number = map(int, match.groups())
+            if index not in numbers or index == title_number:
+                continue
+            backup = folder / '_wrong_episode_backup'
+            backup.mkdir(exist_ok=True)
+            dest = backup / file.name
+            n = 1
+            while dest.exists():
+                dest = backup / f'{file.stem}-{n}{file.suffix}'
+                n += 1
+            file.replace(dest)
+            self.log(f'[目录纠错] 旧文件 {file.name} 的集号不一致，已保留到 {backup.name}/')
 
     def save_metadata(self, info: dict) -> Path:
         folder = self.out / safe_name(info.get("title", ""))
@@ -495,8 +565,18 @@ class Downloader:
     def download(self, series_id: str, spec: str):
         info, episodes = self.details(series_id)
         folder = self.save_metadata(info)
-        numbers = parse_range(spec, len(episodes))
-        selected = [episodes[n - 1] for n in numbers]
+        by_number = {ep.number: ep for ep in episodes}
+        total = max(len(episodes), max(by_number))
+        try:
+            total = max(total, int(info.get('episode_count') or 0))
+        except (ValueError, TypeError):
+            pass
+        numbers = parse_range(spec, total)
+        missing = [number for number in numbers if number not in by_number]
+        if missing:
+            raise DramaError(f'剧集目录缺少真实集号：{missing[:20]}，拒绝以其他集错位替代')
+        selected = [by_number[number] for number in numbers]
+        self.backup_mismatched_legacy_files(folder, set(numbers))
         self.log(f"剧名：{info.get('title')} | 全 {len(episodes)} 集 | 下载 {len(selected)} 集 | 线程 {self.workers} | 清晰度 {self.quality}")
         self.log(f"保存目录：{folder}")
         failed = []
