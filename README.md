@@ -1,6 +1,6 @@
 # drama-downloader
 
-番茄短剧 Python 下载器，独立运行，无需原 App、Rust 后端、模拟器或 Frida。
+红果短剧 Python 下载器，独立运行，无需原 App、Rust 后端、模拟器或 Frida。
 
 支持短剧搜索、作品及剧集信息查询、选集下载、清晰度选择、自动设备注册、设备池轮换、多线程下载和断点续传。加密片源可使用 FFmpeg 处理。
 
