@@ -363,6 +363,56 @@ class DirectClient:
              + '&use_lynx=false&use_correct=true&tab_type=11'+SEARCH_SUFFIX)
         return self.request(url,headers={'User-Agent':DRAGON_UA})
 
+    def video_series(self, series_id):
+        """Get authoritative short-drama episode numbers and video IDs.
+
+        The generic reading directory is NOT an episode-number source: its
+        chapter titles may start at 110 even for a 109-episode series.
+        """
+        series_id = str(series_id)
+        query = VIDEO_DETAIL_URL.partition('?')[2]
+        base = 'https://api5-normal-sinfonlineb.fqnovel.com'
+        biz = {
+            'detail_page_version': 0,
+            'disable_digg_stat': False,
+            'disable_video_relate_book': False,
+            'image_shrink_datas_str': 'W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjcyLCJzaHJpbmtfdHlwZSI6NH1d\n',
+            'need_all_video_definition': False,
+            'need_mp4_align': False,
+            'screen_width_px': '900',
+            'source': 7,
+            'use_os_player': False,
+            'use_server_dns': False,
+        }
+        headers = {
+            'User-Agent': VIDEO_DETAIL_UA,
+            'Accept': 'application/json; charset=utf-8,application/x-protobuf',
+            'Content-Type': 'application/json; charset=utf-8',
+            'x-xs-from-web': '0',
+            'sdk-version': '2',
+        }
+        attempts = (
+            ('/novel/player/multi_video_detail/preload/v1',
+             {'biz_param': biz, 'dr_scene': 'preload', 'series_id': series_id}),
+            ('/novel/player/multi_video_detail/v1/',
+             {'biz_param': biz, 'series_id': series_id}),
+        )
+        errors = []
+        for route, payload in attempts:
+            try:
+                result = self.request(base + route + '?' + query, method='POST',
+                                      body=json_body(payload), headers=headers)
+                data = result.get('data')
+                item = data.get(series_id) if isinstance(data, dict) else None
+                video = item.get('video_data') if isinstance(item, dict) else None
+                video_list = video.get('video_list') if isinstance(video, dict) else None
+                if not video_list:
+                    raise DirectError('短剧详情缺少 video_list（不可使用小说目录猜测集号）')
+                return result
+            except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+                errors.append(f'{route}: {exc}')
+        raise DirectError('短剧专用剧集目录获取失败：' + '; '.join(errors))
+
     def directory(self,series_id):
         esc=quote_plus
         url=('https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/directory/all_items/v?'
