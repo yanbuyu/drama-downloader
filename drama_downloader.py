@@ -63,6 +63,10 @@ def safe_name(title: str) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title).strip(" .")
     return (name[:100].strip(" .") or "未命名")
 
+def episode_file_stem(number: int, quality: str) -> str:
+    """Stable filename based on the authoritative vid_index, not API description."""
+    return f"{number:03d}-第{number}集[{quality}]"
+
 
 def atomic_json(path: Path, data: dict | list):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -507,13 +511,58 @@ class Downloader:
             file.replace(dest)
             self.log(f'[目录纠错] 旧文件 {file.name} 的集号不一致，已保留到 {backup.name}/')
 
+    def migrate_legacy_filenames(self, folder: Path, episodes: list[Episode]):
+        """Rename old synopsis-based files only when the saved video ID matches.
+
+        The previous release saved ``episodes`` (number, id, title) to series.json.
+        This evidence is necessary to avoid re-labeling a wrongly downloaded
+        episode from earlier directory-order bugs as an actual episode.
+        """
+        metadata = folder / "series.json"
+        if not metadata.is_file():
+            return
+        try:
+            old = json.loads(metadata.read_text(encoding="utf-8"))
+            rows = old.get("episodes", []) if isinstance(old, dict) else []
+            previous = {
+                (int(row["number"]), str(row["id"])): str(row["title"])
+                for row in rows
+                if isinstance(row, dict) and all(k in row for k in ("number", "id", "title"))
+            }
+        except (OSError, ValueError, TypeError, KeyError):
+            return
+        for episode in episodes:
+            old_title = previous.get((episode.number, episode.id))
+            if not old_title:
+                continue
+            old_stem = safe_name(f"{episode.number:03d}-{old_title}") + f"[{self.quality}]"
+            new_stem = episode_file_stem(episode.number, self.quality)
+            if old_stem == new_stem:
+                continue
+            # Finished files, raw CENC exports, and matching partial downloads.
+            # Never replace an existing destination, and never touch an entry
+            # whose saved video ID differs from the current episode's ID.
+            for suffix in (".mp4", ".cenc.mp4", ".mp4.part", ".mp4.part.json", ".decrypted.tmp.mp4"):
+                source = folder / (old_stem + suffix)
+                target = folder / (new_stem + suffix)
+                if not source.is_file() or target.exists():
+                    continue
+                if suffix == ".mp4.part.json":
+                    # A sidecar only belongs with its successfully moved part.
+                    if (folder / (old_stem + ".mp4.part")).exists():
+                        continue
+                    if not (folder / (new_stem + ".mp4.part")).exists():
+                        continue
+                source.rename(target)
+                self.log(f"[文件整理] {source.name} → {target.name}")
+
     def save_metadata(self, info: dict) -> Path:
         folder = self.out / safe_name(info.get("title", ""))
         atomic_json(folder / "series.json", info)
         return folder
 
     def one(self, ep: Episode, folder: Path):
-        name = safe_name(f"{ep.number:03d}-{ep.title}") + f"[{self.quality}]"
+        name = episode_file_stem(ep.number, self.quality)
         output = folder / (name + ".mp4")
         if output.exists():
             try:
@@ -564,7 +613,7 @@ class Downloader:
 
     def download(self, series_id: str, spec: str):
         info, episodes = self.details(series_id)
-        folder = self.save_metadata(info)
+        folder = self.out / safe_name(info.get("title", ""))
         by_number = {ep.number: ep for ep in episodes}
         total = max(len(episodes), max(by_number))
         try:
@@ -577,6 +626,8 @@ class Downloader:
             raise DramaError(f'剧集目录缺少真实集号：{missing[:20]}，拒绝以其他集错位替代')
         selected = [by_number[number] for number in numbers]
         self.backup_mismatched_legacy_files(folder, set(numbers))
+        self.migrate_legacy_filenames(folder, selected)
+        self.save_metadata(info)
         self.log(f"剧名：{info.get('title')} | 全 {len(episodes)} 集 | 下载 {len(selected)} 集 | 线程 {self.workers} | 清晰度 {self.quality}")
         self.log(f"保存目录：{folder}")
         failed = []
