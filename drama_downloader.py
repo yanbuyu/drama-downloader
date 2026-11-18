@@ -316,18 +316,21 @@ def parse_search(data: dict) -> list[dict]:
                                      "vid", "book_id", "item_id", "id", "cell_id"))
                 if not sid:
                     continue
-                title = first(merged, ("series_title", "title", "name",
-                                       "movie_title", "film_name", "raw_book_name",
-                                       "book_name", "cell_name"))
-                if not title:
-                    label = merged.get("title")
+                title = ""
+                highlight = merged.get("search_high_light")
+                if isinstance(highlight, dict):
+                    label = highlight.get("title")
                     if isinstance(label, dict):
                         title = str(label.get("text") or "").strip()
                 if not title:
-                    highlight = merged.get("search_high_light")
-                    if isinstance(highlight, dict):
-                        label = highlight.get("title")
-                        title = str(label.get("text") or "").strip() if isinstance(label, dict) else ""
+                    for field in ("series_title", "title", "name", "movie_title",
+                                  "film_name", "raw_book_name", "book_name", "cell_name"):
+                        label = merged.get(field)
+                        if isinstance(label, dict):
+                            label = label.get("text")
+                        if label is not None and str(label).strip():
+                            title = str(label).strip()
+                            break
                 if not title:
                     continue
                 heat = search_metric(merged, cell, "heat")
