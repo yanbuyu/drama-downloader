@@ -86,7 +86,7 @@ class DirectPoolAdapter:
         params = params or {}
         if path == "/api/v1/search":
             return self.client.search(str(params.get('query', '')), int(params.get('offset', 0)),
-                                      int(params.get('count', 10)))
+                                      int(params.get('count', 10)), params.get('tab_type', 11))
         m = re.fullmatch(r'/api/v1/series/(\d+)/episodes', path)
         if m:
             return self.client.video_series(m.group(1))
@@ -232,41 +232,120 @@ def parse_short_drama_episodes(payload: dict, series_id: str) -> list[Episode]:
         episodes.append(Episode(number, vid, title, disabled, trailer, duration))
     return episodes
 
+def search_metric(item: dict, parent: dict, kind: str) -> str:
+    """Use upstream heat labels/numbers only; play counts are NOT heat."""
+    sources = [item, parent]
+    # The source app keeps official "9320万热度" text in secondary_info_list.
+    for obj in sources:
+        for key in ("secondary_info_list", "secondary_infos", "recommend_reason_list"):
+            entries = obj.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                value = entry.get("content")
+                if isinstance(value, dict):
+                    value = value.get("text")
+                if isinstance(value, str) and "热度" in value and value.strip():
+                    text = value.strip()
+                    return text if kind == "heat" else ""
+    if kind != "heat":
+        return ""
+    for obj in sources:
+        for field in ("heat", "heat_value", "heat_score", "hot_value", "hot_score",
+                      "hotness", "popularity", "popularity_score", "heat_index", "hot_index"):
+            value = obj.get(field)
+            if value is None or value == "":
+                continue
+            if isinstance(value, dict):
+                value = value.get("text") or value.get("value")
+            if value is None or value == "":
+                continue
+            return str(value).strip()
+    return ""
+
+
+def search_display_heat(item: dict) -> str:
+    """Always include a heat slot; do not substitute a play count."""
+    heat = str(item.get("heat") or "").strip()
+    if not heat:
+        return "热度：未返回"
+    return heat if "热度" in heat else f"热度：{heat}"
+
+
 def parse_search(data: dict) -> list[dict]:
-    inner = data.get("data", data)
-    tabs = inner.get("search_tabs", []) if isinstance(inner, dict) else []
+    """Parse media items from ALL returned tabs, without a VIP/paywall filter."""
+    inner = data.get("data", data) if isinstance(data, dict) else data
+    if not isinstance(inner, dict):
+        return []
+    tabs = inner.get("search_tabs")
+    if not isinstance(tabs, list) or not tabs:
+        tabs = [inner]
     found = {}
     for tab in tabs:
         if not isinstance(tab, dict):
             continue
-        if str(tab.get("tab_type")) != "11" and tab.get("title") not in ("短剧", "漫剧"):
+        tab_label = str(tab.get("title") or tab.get("tab_type") or "综合")
+        cells = tab.get("data", tab.get("items", []))
+        if not isinstance(cells, list):
             continue
-        for cell in tab.get("data", []):
+        for cell in cells:
             if not isinstance(cell, dict):
                 continue
-            children = cell.get("video_data")
-            if not isinstance(children, list) or not children:
+            # The upstream returns both drama video_data and general book_data
+            # media lists, including film cards. Keep the other shapes too.
+            children = []
+            for key in ("video_data", "book_data"):
+                values = cell.get(key)
+                if isinstance(values, list) and values:
+                    children.extend(x for x in values if isinstance(x, dict))
+            if not children:
                 children = [cell]
             for child in children:
-                if not isinstance(child, dict):
-                    continue
                 merged = dict(cell)
                 merged.update(child)
-                details = merged.get("video_detail")
-                if isinstance(details, dict):
-                    merged.update(details)
-                sid = first(merged, ("series_id_str", "pseries_id", "series_id", "book_id"))
+                detail = merged.get("video_detail")
+                if isinstance(detail, dict):
+                    merged.update(detail)
+                book = merged.get("book_data")
+                if isinstance(book, dict):
+                    merged.update(book)
+                sid = first(merged, ("series_id_str", "pseries_id", "video_series_id",
+                                     "series_id", "movie_id", "film_id", "video_id",
+                                     "vid", "book_id", "item_id", "id", "cell_id"))
                 if not sid:
                     continue
-                title = first(merged, ("series_title", "title", "name", "book_name"))
+                title = first(merged, ("series_title", "title", "name",
+                                       "movie_title", "film_name", "raw_book_name",
+                                       "book_name", "cell_name"))
+                if not title:
+                    label = merged.get("title")
+                    if isinstance(label, dict):
+                        title = str(label.get("text") or "").strip()
+                if not title:
+                    highlight = merged.get("search_high_light")
+                    if isinstance(highlight, dict):
+                        label = highlight.get("title")
+                        title = str(label.get("text") or "").strip() if isinstance(label, dict) else ""
                 if not title:
                     continue
-                found[sid] = {
-                    "series_id": sid,
-                    "title": title,
-                    "episodes": first(merged, ("episode_cnt", "episode_count", "ep")),
-                    "intro": first(merged, ("series_intro", "intro")),
+                heat = search_metric(merged, cell, "heat")
+                entry = {
+                    "series_id": sid, "title": title,
+                    "episodes": first(merged, ("episode_cnt", "episode_count", "ep", "serial_count")),
+                    "intro": first(merged, ("series_intro", "intro", "abstract")),
+                    "heat": heat, "tab": tab_label,
                 }
+                old = found.get(sid)
+                if old is None:
+                    found[sid] = entry
+                else:
+                    # General and drama search may return the same work:
+                    # preserve whichever contains more actual metadata.
+                    for field in ("title", "episodes", "intro", "heat"):
+                        if not old.get(field) and entry.get(field):
+                            old[field] = entry[field]
     return list(found.values())
 
 
@@ -665,6 +744,7 @@ def main(argv=None) -> int:
     search = sub.add_parser("search", help="按名称搜索短剧")
     search.add_argument("keyword")
     search.add_argument("--pages", type=int, default=1)
+    search.add_argument("--tab", default="all", help="搜索标签：all（综合+短剧）、1（综合）、11（短剧）或上游其他类型")
     info = sub.add_parser("info", help="获取详细信息、演员、剧集目录，保存JSON")
     info.add_argument("series_id")
     dl = sub.add_parser("download", help="指定集数范围和画质，多线程下载MP4")
@@ -719,15 +799,36 @@ def main(argv=None) -> int:
     app = Downloader(pool, Path(args.out), getattr(args, "workers", 4), getattr(args, "quality", "best"), getattr(args, "raw", False))
     if args.command == "search":
         results = {}
-        for page in range(args.pages):
-            data = pool.request("/api/v1/search", {"query": args.keyword, "offset": page * 10, "count": 10, "tab_type": 11})
-            for item in parse_search(data):
-                results[item["series_id"]] = item
+        tabs = ("1", "11") if args.tab == "all" else (args.tab,)
+        errors = []
+        for tab in tabs:
+            for page in range(args.pages):
+                try:
+                    data = pool.request("/api/v1/search", {
+                        "query": args.keyword, "offset": page * 10, "count": 10, "tab_type": tab,
+                    })
+                except (DramaError, DirectError, requests.RequestException) as exc:
+                    errors.append(f"tab={tab},page={page + 1}: {exc}")
+                    break
+                for item in parse_search(data):
+                    old = results.get(item["series_id"])
+                    if old is None:
+                        results[item["series_id"]] = item
+                    else:
+                        for field in ("title", "episodes", "intro", "heat"):
+                            if not old.get(field) and item.get(field):
+                                old[field] = item[field]
         if not results:
-            print("无搜索结果（可能是该页没有短剧，或上游接口发生变化）")
+            if errors:
+                raise DramaError("搜索失败：" + "; ".join(errors))
+            print("无搜索结果")
             return 0
+        if errors:
+            for error in errors:
+                print(f"[搜索提醒] {error}")
         for i, item in enumerate(results.values(), 1):
-            print(f"{i:02d}. {item['title']}  ID={item['series_id']}  集数={item['episodes'] or '?'}")
+            print(f"{i:02d}. {item['title']}  ID={item['series_id']}"
+                  f"  集数={item['episodes'] or '?'}  {search_display_heat(item)}")
         return 0
     if args.command == "info":
         details, episodes = app.details(args.series_id)
