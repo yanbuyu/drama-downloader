@@ -424,12 +424,12 @@ class DirectClient:
                 if attempt+1<retries:time.sleep(0.4*(attempt+1))
         raise DirectError(f'上游请求失败：{last}')
 
-    def search(self,keyword:str,offset=0,count=10):
+    def search(self,keyword:str,offset=0,count=10,tab_type=11):
         esc=quote_plus
         url=('https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/search/tab/v?'
              + f'bookshelf_search_plan=4&offset={offset}&user_is_login=1&bookstore_tab=2&passback={offset}'
              + f'&query={esc(keyword)}&count={count}&search_source=1&clicked_content=search_history'
-             + '&use_lynx=false&use_correct=true&tab_type=11'+SEARCH_SUFFIX)
+             + f'&use_lynx=false&use_correct=true&tab_type={quote_plus(str(tab_type))}'+SEARCH_SUFFIX)
         return self.request(url,headers={'User-Agent':DRAGON_UA})
 
     def video_series(self, series_id):
