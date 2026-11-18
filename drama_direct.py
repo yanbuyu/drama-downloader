@@ -125,6 +125,26 @@ def register_device(*, mock_origin: str|None=None, timeout=20)->dict:
             'created_time':time.strftime('%Y-%m-%d %H:%M:%S')}
 
 
+def generate_local_device() -> dict:
+    """Create a local device identity to try before server registration.
+
+    This is an active *local candidate*, not a claim of server-side
+    registration. The first successful upstream request confirms usability;
+    authentication rejection triggers real device registration.
+    """
+    return {
+        'device_id': str(secrets.randbelow(9 * 10**17) + 10**17),
+        'install_id': str(secrets.randbelow(9 * 10**17) + 10**17),
+        'cdid': str(uuid.uuid4()),
+        'openudid': secrets.token_hex(8),
+        'status': 'active',
+        'origin': 'local_generated',
+        'server_verified': False,
+        'registered_version_code': VERSION,
+        'created_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
 class DevicePool:
     """可导入什锦铺原始 JSON 池，自动注册并轮询，线程安全落盘。"""
     def __init__(self,path:str,desired=2,mock_origin=None):
@@ -167,15 +187,45 @@ class DevicePool:
     def get(self):
         with self._lock:
             if not self._devices:
-                self.ensure(1)
+                device=generate_local_device()
+                self._devices.append(device)
+                self._save()
             device=self._devices[self._seq%len(self._devices)]
             self._seq+=1
             device['use_count']=int(device.get('use_count',0))+1
             return dict(device)
 
+    def mark_verified(self, device_id):
+        with self._lock:
+            for device in self._devices:
+                if device['device_id']==device_id and not device.get('server_verified'):
+                    device['server_verified']=True
+                    self._save()
+                    break
+
+    def replace_rejected(self, device_id):
+        """Try other cached identities first; register only if none remain.
+
+        Serialize replacement so simultaneous rejected requests cannot race
+        to register duplicate replacement devices.
+        """
+        with self._lock:
+            self._devices=[d for d in self._devices if d['device_id']!=device_id]
+            self._save()
+            if self._devices:
+                return dict(self._devices[0])
+            device=register_device(mock_origin=self.mock_origin)
+            device.setdefault('origin','server_registered')
+            device.setdefault('server_verified',False)
+            self._devices.append(device)
+            self._save()
+            return dict(device)
+
     def status(self):
         with self._lock:
-            return [{'device_id':d['device_id'],'status':d.get('status','active'),
+            return [{'device_id':d['device_id'], 'status':d.get('status','active'),
+                     'origin':d.get('origin','existing'), 
+                     'server_verified':bool(d.get('server_verified',False)),
                      'use_count':d.get('use_count',0)} for d in self._devices]
 
     def retire(self,device_id):
@@ -339,16 +389,20 @@ class DirectClient:
             try:
                 r=requests.request(method,self._url(target),data=body,headers=hdr,timeout=self.timeout)
                 if r.status_code in (401,403):
-                    self.pool.retire(dev['device_id'])
-                    last=DirectError('设备鉴权失败，已停用该ID')
-                    if attempt+1<retries:self.pool.ensure(1)
+                    self.pool.replace_rejected(dev['device_id'])
+                    last=DirectError(f'上游 HTTP {r.status_code} 拒绝设备，已尝试池内替换或注册')
                     continue
                 r.raise_for_status()
                 j=r.json()
                 if not isinstance(j,dict):raise DirectError('接口返回非JSON对象')
+                if str(j.get('code')) in ('401','403'):
+                    self.pool.replace_rejected(dev['device_id'])
+                    last=DirectError('上游业务响应拒绝该设备，已尝试替换或注册')
+                    continue
                 if j.get('success') is False:raise DirectError(str(j.get('message') or j.get('error') or '上游拒绝'))
                 if j.get('code') not in (None,0,'0',200,'200'):
                     raise DirectError(str(j.get('message') or j.get('error') or '业务错误'+str(j.get('code'))))
+                self.pool.mark_verified(dev['device_id'])
                 return j
             except (requests.RequestException,ValueError,DirectError) as exc:
                 last=exc
@@ -442,13 +496,17 @@ class DirectClient:
             try:
                 response=requests.post(self._url(url),headers=headers,data=body,timeout=self.timeout)
                 if response.status_code in (401,403):
-                    self.pool.retire(dev['device_id'])
-                    raise DirectError('V5设备鉴权失败，已停用该ID')
+                    self.pool.replace_rejected(dev['device_id'])
+                    raise DirectError('V5设备鉴权失败，已尝试替换或注册')
                 response.raise_for_status()
                 data=response.json()
                 if not isinstance(data,dict):raise DirectError('V5没有返回JSON对象')
+                if str(data.get('code')) in ('401','403'):
+                    self.pool.replace_rejected(dev['device_id'])
+                    raise DirectError('V5业务响应拒绝设备，已尝试替换或注册')
                 if data.get('success') is False or data.get('code') not in (None,0,'0',200,'200'):
                     raise DirectError(str(data.get('message') or data.get('error') or data.get('code')))
+                self.pool.mark_verified(dev['device_id'])
                 def fetch_fallback(url):
                     # 官方 fallback_api 为不带请求签名的 https JSON 地址。
                     response=requests.get(self._url(url),headers={'User-Agent':
