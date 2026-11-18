@@ -1,0 +1,118 @@
+name: Download drama episodes
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: '短剧作品ID'
+        required: true
+        type: string
+      episodes:
+        description: '下载集数'
+        required: true
+        default: '1-3'
+        type: string
+      quality:
+        description: '清晰度'
+        required: true
+        default: '720'
+        type: string
+      workers:
+        description: '并发下载数'
+        required: true
+        default: '3'
+        type: string
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.issue.title, 'download:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Parse and validate download parameters
+        id: params
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          INPUT_ID: ${{ inputs.id }}
+          INPUT_EPISODES: ${{ inputs.episodes }}
+          INPUT_QUALITY: ${{ inputs.quality }}
+          INPUT_WORKERS: ${{ inputs.workers }}
+        run: |
+          python - <<'PY'
+          import os, re
+          if os.environ['EVENT_NAME'] == 'issues':
+              title=os.environ['ISSUE_TITLE'].strip()
+              match=re.fullmatch(r'download:\s*([0-9]+)',title)
+              if not match:
+                  raise SystemExit('Issue title must be: download: <numeric-id>')
+              v={'id':match.group(1),'episodes':'1-3','quality':'720','workers':'3'}
+              for line in os.environ.get('ISSUE_BODY','').splitlines():
+                  if '=' in line:
+                      key,value=line.split('=',1)
+                      if key.strip() in ('episodes','quality','workers'):
+                          v[key.strip()]=value.strip()
+          else:
+              v={'id':os.environ['INPUT_ID'],'episodes':os.environ['INPUT_EPISODES'],
+                 'quality':os.environ['INPUT_QUALITY'],'workers':os.environ['INPUT_WORKERS']}
+          if not re.fullmatch(r'[0-9]+',v['id']):
+              raise SystemExit('Invalid id')
+          if not re.fullmatch(r'all|[0-9,-]+',v['episodes']):
+              raise SystemExit('Invalid episodes')
+          if not re.fullmatch(r'best|[0-9]+',v['quality']):
+              raise SystemExit('Invalid quality')
+          if not re.fullmatch(r'[0-9]+',v['workers']) or not 1 <= int(v['workers']) <= 16:
+              raise SystemExit('Invalid workers')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as file:
+              for key,value in v.items():
+                  file.write(f'{key}={value}\n')
+          print('Request:',v['id'],v['episodes'],v['quality'],v['workers'],flush=True)
+          PY
+      - name: Install original downloader dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Register real Phoenix playback device
+        env:
+          DEVICE_POOL_FILE: ${{ runner.temp }}/drama-devices.json
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from drama_direct import register_device
+          device = register_device(app_id='8662')
+          if device.get('origin') != 'server_registered' or device.get('app_id') != '8662':
+              raise SystemExit('Phoenix device registration did not return a verified server identity')
+          path = Path(os.environ['DEVICE_POOL_FILE'])
+          path.write_text(json.dumps({'android': [device]}, ensure_ascii=False), encoding='utf-8')
+          path.chmod(0o600)
+          print('Phoenix playback device registered; reusing it in this download run.')
+          PY
+      - name: Download requested episodes
+        env:
+          DRAMA_ID: ${{ steps.params.outputs.id }}
+          EPISODES: ${{ steps.params.outputs.episodes }}
+          QUALITY: ${{ steps.params.outputs.quality }}
+          WORKERS: ${{ steps.params.outputs.workers }}
+        run: |
+          mkdir -p downloads
+          python drama_downloader.py --out downloads --pool "$RUNNER_TEMP/drama-devices.json" download "$DRAMA_ID" --episodes "$EPISODES" --quality "$QUALITY" --workers "$WORKERS"
+      - name: Upload actual MP4 files and result metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drama-${{ steps.params.outputs.id }}-${{ github.run_id }}
+          path: |
+            downloads/**/*.mp4
+            downloads/**/series.json
+            downloads/**/failed.json
+          if-no-files-found: warn
+          retention-days: 1
