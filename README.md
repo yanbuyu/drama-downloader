@@ -62,7 +62,7 @@ python drama_downloader.py --pool devices.json --out downloads --devices 5 downl
 | `--out` | 输出目录，默认 `downloads` |
 | `--raw` | 保存未经处理的原始视频数据 |
 
-设备首次使用时自动注册，信息保存在 `device_pool.json`；无需手动注册。文件统一命名为 `001-第1集[best].mp4`、`002-第2集[best].mp4`，不再把剧情简介写进文件名。旧版超长文件名在 `series.json` 中的视频 ID 核对一致后自动改名并复用，无需重下；错号视频仍保留到 `_wrong_episode_backup/`。下载失败保留 `.part` 缓存，重新执行相同命令即可续传。
+设备池默认复用已有设备；空池先生成本地候选设备，只有上游明确拒绝时才尝试重新注册。设备来源及验证状态保存在 `device_pool.json`，无需手动注册。文件统一命名为 `001-第1集[best].mp4`、`002-第2集[best].mp4`，不再把剧情简介写进文件名。旧版超长文件名在 `series.json` 中的视频 ID 核对一致后自动改名并复用，无需重下；错号视频仍保留到 `_wrong_episode_backup/`。下载失败保留 `.part` 缓存，重新执行相同命令即可续传。
 
 ## 参考项目与开源许可
 
