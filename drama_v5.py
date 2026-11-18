@@ -273,11 +273,17 @@ def sign_v5(base,compressed_body,device,*,now_ms=None,entropy=None):
     identity={'device_id':str(device.get('device_id','')),'install_id':str(device.get('install_id','')),'cdid':cdid}
     if not all(identity.values()): raise ValueError('V5 device identity incomplete')
     bodyhash=hashlib.md5(compressed_body).digest()
+    version_code=str(device.get('registered_version_code') or VERSION_CODE)
+    version_name=str(device.get('version_name') or VERSION_NAME)
+    channel=str(device.get('channel') or CHANNEL)
+    device_type=str(device.get('device_type') or DEVICE_TYPE)
+    os_version=str(device.get('os_version') or OS_VERSION)
+    user_agent=str(device.get('user_agent') or USER_AGENT)
     for offset in range(1024):
         ticket=now_ms+offset
-        values=(('aid',APP_ID),('app_name','novelread'),('version_code',VERSION_CODE),
-                ('version_name',VERSION_NAME),('channel',CHANNEL),('device_platform','android'),
-                ('device_type',DEVICE_TYPE),('os_version',OS_VERSION),('update_version_code',VERSION_CODE),
+        values=(('aid',APP_ID),('app_name','novelread'),('version_code',version_code),
+                ('version_name',version_name),('channel',channel),('device_platform','android'),
+                ('device_type',device_type),('os_version',os_version),('update_version_code',version_code),
                 ('iid',identity['install_id']),('cdid',identity['cdid']),('device_id',identity['device_id']))
         query='&'.join(f'{quote(k,safe="-_.*~")}={quote(v,safe="-_.*~")}' for k,v in values)+f'&_rticket={ticket}'
         queryhash=sm3(query.encode())
@@ -285,7 +291,7 @@ def sign_v5(base,compressed_body,device,*,now_ms=None,entropy=None):
         entropy = entropy or {k:secrets.randbits(32) for k in ('helios','medusa_nonce','packed','message')}
         meds=medusa(queryhash,bodyhash,ts,identity,_PROCESS_STARTED,_PROCESS_NONCE,entropy)
         headers={'x-khronos':str(ts),'x-helios':ladon(ts,LICENSE,int(APP_ID),le32(entropy['helios'])),
-                 'x-medusa':meds,'User-Agent':USER_AGENT,'Accept':'application/json',
+                 'x-medusa':meds,'User-Agent':user_agent,'Accept':'application/json',
                  'Content-Type':'application/json; charset=utf-8','Content-Encoding':'gzip',
                  'x-ss-stub':bodyhash.hex().upper()}
         return base+'?'+query,headers

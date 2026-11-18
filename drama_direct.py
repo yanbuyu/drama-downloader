@@ -19,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote_plus, urlencode, urlsplit, urlunsplit
 
 import requests
 from drama_sign import aes_cbc_enc, aes_cbc_dec, pad16, sign_headers
@@ -30,13 +30,27 @@ SPADE_CONSTANTS=bytes([77,212,194,230,184,49,98,9,14,82,179,199,166,115,59,164,2
 DEFAULT_UA='com.dragon.read/66732 (Linux; U; Android 10; zh_CN; Pixel 4 XL; Build/QD1A.190821.007;tt-ok/3.12.13.4-tiktok)'
 DRAGON_UA='com.dragon.read/65132 (Linux; U; Android 10; zh_CN; MI 12; Build/MMB29M; Cronet/TTNetVersion:9ac8d95c 2024-11-25 QuicVersion:3f326df4 2024-11-14)'
 VERSION='65132'
-VIDEO_DETAIL_UA='com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)'
+VIDEO_DETAIL_UA='com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; 23127PN0CC; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)'
 VIDEO_DETAIL_URL=('https://api5-normal-sinfonlineb.fqnovel.com/novel/player/video_detail/v1/?iid={install_id}'
-    '&device_id={device_id}&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=71332'
-    '&version_name=7.1.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C'
-    '&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=71332'
-    '&resolution=1280*2772&dpi=520&update_version_code=71332&host_abi=arm64-v8a&dragon_device_type=phone'
-    '&pv_player=71332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0')
+    '&device_id={device_id}&ac=wifi&channel=xiaomi_8662_64&aid=8662&app_name=novelread&version_code=73932'
+    '&version_name=7.3.9.32&device_platform=android&os=android&ssmix=a&device_type=23127PN0CC'
+    '&device_brand=Xiaomi&language=zh&os_api=34&os_version=14&manifest_version_code=73932'
+    '&resolution=1200*2670&dpi=460&update_version_code=73932&host_abi=arm64-v8a&dragon_device_type=phone'
+    '&pv_player=73932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0')
+# Exact detail identity/body copied from ch6vip/novel-sound rust/src/endpoints/base.rs
+# Used only when the current working client detail configuration has no episodes.
+UPSTREAM_DETAIL_URL=(
+    'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/video_detail/v1/?iid={install_id}'
+    '&device_id={device_id}&ac=wifi&channel=update_64&aid=8662&app_name=novelread'
+    '&version_code=71332&version_name=7.1.3.32&device_platform=android&os=android&ssmix=a'
+    '&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16'
+    '&manifest_version_code=71332&resolution=1280*2772&dpi=520&update_version_code=71332'
+    '&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=71332&compliance_status=0'
+    '&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0')
+UPSTREAM_DETAIL_UA=(
+    'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C;'
+    ' Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23'
+    ' QuicVersion:c67e9834 2025-09-08)')
 DIRECTORY_SUFFIX=('&book_info_md5=&need_version=true&device_id={device_id}&ac=wifi&channel=xiaomi_1967_64'
     '&aid=1967&app_name=novelapp&version_code=65132&version_name=6.5.1.32&device_platform=android'
     '&os=android&ssmix=a&device_type=FRD-AL10&device_brand=honor&language=zh&os_api=28'
@@ -84,8 +98,85 @@ def reg_params(info):
         aid='1967',minor_status='0',app_name='novel',mcc_mnc='46007')
 
 
-def register_device(*, mock_origin: str|None=None, timeout=20)->dict:
-    """执行上游 device_register，并读取服务端返回的设备标识。"""
+def register_phoenix_device(*, mock_origin=None, timeout=20)->dict:
+    """Register a com.phoenix.read guest using the same app identity as video detail.
+
+    Unlike the legacy novel-app registration this uses aid=8662, its own
+    version/channel, and the matching Xiaomi 14 profile. Device IDs are still
+    obtained from the server, never invented as proof of registration.
+    """
+    info={'cdid':str(uuid.uuid4()),'openudid':secrets.token_hex(8),
+          'clientudid':str(uuid.uuid4()),'oaid':str(uuid.uuid4()),
+          'req_id':str(uuid.uuid4())}
+    now=int(time.time()*1000)
+    oa={'req_id':info['oaid'],'hw_id_version_code':'0','take_ms':'6',
+        'is_track_limited':'false','query_times':'1','id':info['oaid'],
+        'time':str(now-200)}
+    head={
+        'display_name':'红果免费短剧','update_version_code':73932,
+        'manifest_version_code':73932,'app_version_minor':'7.3.9.32',
+        'aid':8662,'channel':'xiaomi_8662_64','package':'com.phoenix.read',
+        'app_version':'7.3.9.32','version_code':73932,
+        'os':'Android','os_version':'14','os_api':34,
+        'device_model':'23127PN0CC','device_brand':'Xiaomi',
+        'device_manufacturer':'Xiaomi','cpu_abi':'arm64-v8a',
+        'language':'zh','timezone':8,'access':'wifi','region':'CN',
+        'tz_name':'Asia/Shanghai','tz_offset':28800,
+        'cdid':info['cdid'],'openudid':info['openudid'],
+        'clientudid':info['clientudid'],'ipv6_list':[],
+        'sim_serial_number':[],'oaid':oa,'oaid_may_support':True,
+        'req_id':info['req_id'],'device_platform':'android','guest_mode':0,
+        'is_system_app':0,'sdk_flavor':'china','device_id':'0','install_id':'0',
+    }
+    payload={'magic_tag':'ss_app_log','header':head,'_gen_time':now}
+    body=tt_encrypt(gzip.compress(json_body(payload)))
+    url=('https://log5-applog-lq.fqnovel.com/service/2/device_register/?'
+         +urlencode({'req_id':info['req_id'],'tt_data':'a'}))
+    if mock_origin:
+        u=urlsplit(url)
+        url=mock_origin.rstrip('/')+u.path+'?'+u.query
+    ua=('com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; '
+        '23127PN0CC; Build/UKQ1.230804.001; '
+        'Cronet/TTNetVersion:8d40f833 2026-03-03 '
+        'QuicVersion:21ac1950 2025-11-18)')
+    headers={'Content-Type':'application/octet-stream;tt-data=a',
+             'log-encode-type':'gzip','sdk-version':'2',
+             'passport-sdk-version':'5051452',
+             'x-vc-bdturing-sdk-version':'4.0.3.cn','x-ss-dp':'8662',
+             'X-SS-STUB':hashlib.md5(body).hexdigest().upper(),
+             'User-Agent':ua}
+    try:
+        response=requests.post(url,data=body,headers=headers,timeout=timeout)
+        response.raise_for_status()
+        result=response.json()
+        if not isinstance(result,dict):
+            raise ValueError('register response is not an object')
+    except (requests.RequestException,ValueError) as exc:
+        raise DirectError(f'红果设备注册失败：{exc}') from exc
+    device_id=str(result.get('device_id_str') or result.get('device_id') or '')
+    install_id=str(result.get('install_id_str') or result.get('install_id') or '')
+    if not device_id.strip() or device_id=='0' or not install_id.strip() or install_id=='0':
+        raise DirectError('红果设备注册未返回可用的设备ID')
+    cookies=getattr(response,'cookies',None)
+    def cookie(name):
+        if cookies is None:return ''
+        try:return str(cookies.get(name) or '')
+        except (AttributeError,TypeError):return ''
+    return {'device_id':device_id,'install_id':install_id,'cdid':info['cdid'],
+            'ttreq':cookie('ttreq'),'store_region':cookie('store-region'),
+            'store_region_src':cookie('store-region-src'),
+            'openudid':info['openudid'],'app_id':'8662','app_name':'novelread',
+            'registered_version_code':'73932','version_name':'7.3.9.32',
+            'channel':'xiaomi_8662_64','device_type':'23127PN0CC',
+            'os_version':'14','user_agent':ua,'origin':'server_registered',
+            'server_verified':False,'status':'active',
+            'created_time':time.strftime('%Y-%m-%d %H:%M:%S')}
+
+
+def register_device(*, mock_origin: str|None=None, timeout=20, app_id='1967')->dict:
+    """Register the matching app identity; default keeps legacy source behavior."""
+    if str(app_id)=='8662':
+        return register_phoenix_device(mock_origin=mock_origin,timeout=timeout)
     dev={'device_type':'MI 12','os_api':'29','os_version':'10','resolution':'1440*2392','dpi':'560',
          'cdid':str(uuid.uuid4()),'uuid':str(uuid.uuid4()),'clientudid':str(uuid.uuid4()),
          'openudid':secrets.token_hex(8),'version_code':VERSION,'version_name':'6.5.1.32'}
@@ -121,26 +212,35 @@ def register_device(*, mock_origin: str|None=None, timeout=20)->dict:
     if not device_id.strip() or not install_id.strip():
         raise DirectError(f'设备注册未返回有效ID，响应状态：{str(j.get("message") or j.get("error") or j.get("code"))[:200]}')
     return {'device_id':device_id,'install_id':install_id,'cdid':dev['cdid'],
-            'openudid':dev['openudid'],'status':'active','registered_version_code':VERSION,
+            'openudid':dev['openudid'],'status':'active','app_id':'1967','origin':'server_registered',
+            'registered_version_code':VERSION,
             'created_time':time.strftime('%Y-%m-%d %H:%M:%S')}
 
 
-def generate_local_device() -> dict:
+def generate_local_device(app_id='1967') -> dict:
     """Create a local device identity to try before server registration.
 
     This is an active *local candidate*, not a claim of server-side
     registration. The first successful upstream request confirms usability;
     authentication rejection triggers real device registration.
     """
+    phoenix=str(app_id)=='8662'
     return {
         'device_id': str(secrets.randbelow(9 * 10**17) + 10**17),
         'install_id': str(secrets.randbelow(9 * 10**17) + 10**17),
+        'app_id': '8662' if phoenix else '1967',
+        'app_name': 'novelread' if phoenix else 'novelapp',
+        'registered_version_code': '73932' if phoenix else VERSION,
+        'version_name': '7.3.9.32' if phoenix else '6.5.1.32',
+        'channel': 'xiaomi_8662_64' if phoenix else 'xiaomi_1967_64',
+        'device_type': '23127PN0CC' if phoenix else 'MI 12',
+        'os_version': '14' if phoenix else '10',
         'cdid': str(uuid.uuid4()),
         'openudid': secrets.token_hex(8),
         'status': 'active',
         'origin': 'local_generated',
         'server_verified': False,
-        'registered_version_code': VERSION,
+        'user_agent': VIDEO_DETAIL_UA if phoenix else DRAGON_UA,
         'created_time': time.strftime('%Y-%m-%d %H:%M:%S'),
     }
 
@@ -162,6 +262,8 @@ class DevicePool:
             self._devices=[dict(d) for d in raw if isinstance(d,dict)
                   and str(d.get('device_id','')).strip() and str(d.get('install_id','')).strip()
                   and d.get('status','active')=='active']
+            for device in self._devices:
+                device.setdefault('app_id','8662' if str(device.get('registered_version_code')) in ('73932','71332','74332') else '1967')
 
     def _save(self):
         output={'android':self._devices,'last_update':time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -194,13 +296,17 @@ class DevicePool:
                 self._save()
             return len(self._devices)
 
-    def get(self):
+    def get(self, app_id='1967'):
+        """Reuse identities registered for this app; never cross-use novel and Phoenix IDs."""
+        app_id=str(app_id)
         with self._lock:
-            if not self._devices:
-                device=generate_local_device()
+            same=[d for d in self._devices if str(d.get('app_id','1967'))==app_id]
+            if not same:
+                device=generate_local_device() if app_id=='1967' else generate_local_device(app_id=app_id)
                 self._devices.append(device)
                 self._save()
-            device=self._devices[self._seq%len(self._devices)]
+                same=[device]
+            device=same[self._seq%len(same)]
             self._seq+=1
             device['use_count']=int(device.get('use_count',0))+1
             return dict(device)
@@ -213,24 +319,24 @@ class DevicePool:
                     self._save()
                     break
 
-    def replace_rejected(self, device_id):
-        """Try other cached identities first; register only if none remain.
-
-        Serialize replacement so simultaneous rejected requests cannot race
-        to register duplicate replacement devices.
-        """
+    def replace_rejected(self, device_id, app_id='1967'):
+        """Rotate within the same app; when exhausted, register that exact app."""
+        app_id=str(app_id)
         with self._lock:
             self._devices=[d for d in self._devices if d['device_id']!=device_id]
             self._save()
-            if self._devices:
-                return dict(self._devices[0])
+            others=[d for d in self._devices if str(d.get('app_id','1967'))==app_id]
+            if others:
+                return dict(others[0])
             try:
-                device=register_device(mock_origin=self.mock_origin)
+                if app_id=='1967':
+                    device=register_device(mock_origin=self.mock_origin)
+                else:
+                    device=register_device(mock_origin=self.mock_origin,app_id=app_id)
                 device.setdefault('origin','server_registered')
             except (DirectError, requests.RequestException):
-                # When even registration is unavailable, keep trying a fresh
-                # local identity rather than inventing server verification.
-                device=generate_local_device()
+                device=generate_local_device() if app_id=='1967' else generate_local_device(app_id=app_id)
+            device.setdefault('app_id',app_id)
             device.setdefault('server_verified',False)
             self._devices.append(device)
             self._save()
@@ -239,7 +345,7 @@ class DevicePool:
     def status(self):
         with self._lock:
             return [{'device_id':d['device_id'], 'status':d.get('status','active'),
-                     'origin':d.get('origin','existing'), 
+                     'app_id':d.get('app_id','1967'),'origin':d.get('origin','existing'), 
                      'server_verified':bool(d.get('server_verified',False)),
                      'use_count':d.get('use_count',0)} for d in self._devices]
 
@@ -388,35 +494,55 @@ class DirectClient:
         u=urlsplit(url)
         return self.mock_origin.rstrip('/')+u.path+('?' +u.query if u.query else '')
 
-    def request(self,url,*,method='GET',body=None,headers=None,sign=True,retries=2):
+    def request(self,url,*,method='GET',body=None,headers=None,sign=True,retries=2,device_app_id=None):
         last=None
         for attempt in range(retries):
-            dev=self.pool.get()
+            app_id=str(device_app_id or parse_qs(urlsplit(url).query).get('aid',['1967'])[0])
+            dev=self.pool.get(app_id=app_id)
             target=url
             for k,v in [('device_id',dev['device_id']),('install_id',dev['install_id']),
                         ('secret_key',dev.get('secret_key','')),('cdid',dev.get('cdid','')),
                         ('openudid',dev.get('openudid') or dev['device_id'])]:
                 target=target.replace('{'+k+'}',str(v))
             query=urlsplit(target).query
-            hdr={'User-Agent':DEFAULT_UA}
+            hdr={'User-Agent':str(dev.get('user_agent') or DEFAULT_UA)}
             hdr.update(headers or {})
-            if sign:hdr.update(sign_headers(query,body))
+            if app_id=='8662':
+                hdr['x-ss-dp']='8662'
+                hdr['lc']='101'
+                hdr['x-reading-request']=f"{int(time.time()*1000)}-{secrets.randbelow(2**31)}"
+                if dev.get('ttreq'):
+                    hdr['Cookie']=('passport_csrf_token=; passport_csrf_token_default=; '
+                                   'store-region='+str(dev.get('store_region') or '')+'; '
+                                   'store-region-src='+str(dev.get('store_region_src') or '')+'; '
+                                   'install_id='+str(dev['install_id'])+'; '
+                                   'ttreq='+str(dev['ttreq']))
+            if sign:hdr.update(sign_headers(query,body,install_id=str(dev.get('install_id',''))))
             try:
                 r=requests.request(method,self._url(target),data=body,headers=hdr,timeout=self.timeout)
                 if r.status_code in (401,403):
-                    self.pool.replace_rejected(dev['device_id'])
+                    self.pool.replace_rejected(dev['device_id'],app_id=app_id)
                     last=DirectError(f'上游 HTTP {r.status_code} 拒绝设备，已尝试池内替换或注册')
                     continue
                 r.raise_for_status()
                 j=r.json()
                 if not isinstance(j,dict):raise DirectError('接口返回非JSON对象')
                 if str(j.get('code')) in ('401','403'):
-                    self.pool.replace_rejected(dev['device_id'])
+                    self.pool.replace_rejected(dev['device_id'],app_id=app_id)
                     last=DirectError('上游业务响应拒绝该设备，已尝试替换或注册')
                     continue
-                if j.get('success') is False:raise DirectError(str(j.get('message') or j.get('error') or '上游拒绝'))
-                if j.get('code') not in (None,0,'0',200,'200'):
-                    raise DirectError(str(j.get('message') or j.get('error') or '业务错误'+str(j.get('code'))))
+                message=str(j.get('message') or j.get('error') or '')
+                failed=j.get('success') is False or j.get('code') not in (None,0,'0',200,'200')
+                if failed:
+                    if (app_id=='8662' and (dev.get('origin')=='local_generated' or not dev.get('ttreq'))
+                            and attempt+1<retries and '已下架' in message):
+                        # A local candidate is not an installed Phoenix app.
+                        # Retry once with a genuine Phoenix registration,
+                        # without interpreting this response as delisting.
+                        self.pool.replace_rejected(dev['device_id'],app_id=app_id)
+                        last=DirectError('红果匿名设备未注册，已重试正式设备')
+                        continue
+                    raise DirectError(f"上游业务码={j.get('code')}，信息={message}")
                 self.pool.mark_verified(dev['device_id'])
                 return j
             except (requests.RequestException,ValueError,DirectError) as exc:
@@ -432,27 +558,62 @@ class DirectClient:
              + f'&use_lynx=false&use_correct=true&tab_type={quote_plus(str(tab_type))}'+SEARCH_SUFFIX)
         return self.request(url,headers={'User-Agent':DRAGON_UA})
 
-    def video_series(self, series_id):
-        """Get authoritative short-drama episode numbers and video IDs.
+    def series_heat_batch(self, series_ids):
+        """Read actual heat from the short-drama batch-detail endpoint.
 
-        The generic reading directory is NOT an episode-number source: its
-        chapter titles may start at 110 even for a 109-episode series.
+        The search tab usually omits heat. The player detail returns
+        series_sub_title_list / hot_score, which are NOT series_play_cnt.
+        """
+        ids=list(dict.fromkeys(str(x).strip() for x in series_ids if str(x).strip()))
+        if not ids:
+            return {}
+        query=VIDEO_DETAIL_URL.partition('?')[2]
+        base='https://api5-normal-sinfonlineb.fqnovel.com'
+        payload={
+            'series_id': ','.join(ids),
+            'dr_scene': 'player',
+            'biz_param': {
+                'detail_page_version':0,
+                'need_all_video_definition':False,
+                'need_mp4_align':False,
+                'source':7,
+                'use_os_player':False,
+                'use_server_dns':False,
+            },
+        }
+        headers={
+            'User-Agent':VIDEO_DETAIL_UA,
+            'Accept':'application/json; charset=utf-8,application/x-protobuf',
+            'Content-Type':'application/json; charset=utf-8',
+            'x-xs-from-web':'0',
+            'sdk-version':'2',
+        }
+        errors=[]
+        for route in (
+            '/novel/player/multi_video_detail/player/v1',
+            '/novel/player/multi_video_detail/v1/',
+        ):
+            try:
+                result=self.request(base+route+'?'+query,method='POST',
+                                    body=json_body(payload),headers=headers)
+                data=result.get('data')
+                if not isinstance(data,dict):
+                    raise DirectError('批量详情没有返回 data')
+                return data
+            except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+                errors.append(f'{route}: {exc}')
+        raise DirectError('热度批量详情失败：'+'; '.join(errors))
+
+    def video_series(self, series_id):
+        """Use upstream video_detail/v1 first; retain previous fallback routes.
+
+        Some content classes reject one scene while the same series remains
+        available through another. Do not interpret an endpoint's error text
+        as a reliable global delisting status.
         """
         series_id = str(series_id)
         query = VIDEO_DETAIL_URL.partition('?')[2]
         base = 'https://api5-normal-sinfonlineb.fqnovel.com'
-        biz = {
-            'detail_page_version': 0,
-            'disable_digg_stat': False,
-            'disable_video_relate_book': False,
-            'image_shrink_datas_str': 'W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjcyLCJzaHJpbmtfdHlwZSI6NH1d\n',
-            'need_all_video_definition': False,
-            'need_mp4_align': False,
-            'screen_width_px': '900',
-            'source': 7,
-            'use_os_player': False,
-            'use_server_dns': False,
-        }
         headers = {
             'User-Agent': VIDEO_DETAIL_UA,
             'Accept': 'application/json; charset=utf-8,application/x-protobuf',
@@ -460,33 +621,182 @@ class DirectClient:
             'x-xs-from-web': '0',
             'sdk-version': '2',
         }
+        biz = {
+            'detail_page_version': 0,
+            'need_all_video_definition': False,
+            'need_mp4_align': False,
+            'source': 7,
+            'use_os_player': False,
+            'use_server_dns': False,
+        }
+        player_body = {'series_id': series_id, 'dr_scene': 'player', 'biz_param': biz}
+        preload_body = {'series_id': series_id, 'dr_scene': 'preload',
+                        'biz_param': dict(biz, disable_digg_stat=False,
+                                          disable_video_relate_book=False)}
         attempts = (
-            ('/novel/player/multi_video_detail/preload/v1',
-             {'biz_param': biz, 'dr_scene': 'preload', 'series_id': series_id}),
-            ('/novel/player/multi_video_detail/v1/',
-             {'biz_param': biz, 'series_id': series_id}),
+            ('/novel/player/multi_video_detail/player/v1', player_body),
+            ('/novel/player/multi_video_detail/preload/v1', preload_body),
+            ('/novel/player/multi_video_detail/v1/', player_body),
         )
         errors = []
+        # The upstream ch6vip/novel-sound series detail route is video_detail/v1.
+        # Prefer that original request and body. Leave the pre-existing alternate
+        # routes as compatibility fallbacks for titles with different layouts.
+        try:
+            response = self.info(series_id)
+            video = response.get('data', {}).get('video_data')
+            rows = video.get('video_list') if isinstance(video, dict) else None
+            if isinstance(rows, (list, dict)) and rows:
+                return response
+            errors.append('/novel/player/video_detail/v1/ (upstream): missing video_list')
+        except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+            errors.append('/novel/player/video_detail/v1/ (upstream): '+str(exc))
+        # Original ch6vip build uses a 71332 detail fingerprint and the
+        # original device pool, distinct from our working 73932 client.
+        try:
+            response=self.upstream_info(series_id)
+            video=response.get('data',{}).get('video_data')
+            rows=video.get('video_list') if isinstance(video,dict) else None
+            if isinstance(rows,(list,dict)) and rows:
+                return response
+            errors.append('/novel/player/video_detail/v1/ (71332 upstream): missing video_list')
+        except (requests.RequestException,ValueError,TypeError,DirectError) as exc:
+            errors.append('/novel/player/video_detail/v1/ (71332 upstream): '+str(exc))
         for route, payload in attempts:
             try:
-                result = self.request(base + route + '?' + query, method='POST',
-                                      body=json_body(payload), headers=headers)
-                data = result.get('data')
-                item = data.get(series_id) if isinstance(data, dict) else None
-                video = item.get('video_data') if isinstance(item, dict) else None
-                video_list = video.get('video_list') if isinstance(video, dict) else None
-                if not video_list:
-                    raise DirectError('短剧详情缺少 video_list（不可使用小说目录猜测集号）')
-                return result
+                response = self.request(base + route + '?' + query, method='POST',
+                                        body=json_body(payload), headers=headers)
+                data = response.get('data', {})
+                record = data.get(series_id) if isinstance(data, dict) else None
+                if not isinstance(record, dict):
+                    record = data
+                video = record.get('video_data') if isinstance(record, dict) else None
+                rows = video.get('video_list') if isinstance(video, dict) else None
+                if isinstance(rows, (list, dict)) and rows:
+                    return response
+                raise DirectError('响应没有有效 video_list')
             except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
                 errors.append(f'{route}: {exc}')
-        raise DirectError('短剧专用剧集目录获取失败：' + '; '.join(errors))
+        # The official single-series detail endpoint can succeed even when
+        # batch/preload scenes reject a title or a given anonymous device.
+        for label, callable_request in (
+            ('/novel/player/video_detail/v1/ (standard)', lambda: self.request(
+                VIDEO_DETAIL_URL, method='POST', headers=headers,
+                body=json_body({
+                    'series_id': series_id,
+                    'biz_param': {
+                        'caller_scene': 'single_col',
+                        'detail_page_version': 0,
+                        'from_video_id': '',
+                        'need_all_video_definition': False,
+                        'need_mp4_align': False,
+                        'source': 4,
+                        'video_id_type': 1,
+                    },
+                }))),
+        ):
+            try:
+                response = callable_request()
+                video = response.get('data', {}).get('video_data')
+                if isinstance(video, dict) and video.get('video_list'):
+                    return response
+                raise DirectError('单剧详情没有有效 video_list')
+            except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+                errors.append(f'{label}: {exc}')
+        try:
+            return self.web_series(series_id)
+        except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+            errors.append('官网 _ROUTER_DATA 详情: '+str(exc))
+        raise DirectError('所有剧集目录来源均失败（不代表作品下架）：'
+                          + '; '.join(errors))
+
+    def web_series(self, series_id):
+        """Read the public web detail page's ordered vid_list.
+
+        Separate from the app's video_detail endpoints: a 101001 response from
+        those endpoints does not establish that the public series has no videos.
+        Shape is normalized to multi_video_detail so callers keep real indices.
+        """
+        series_id=str(series_id)
+        if not series_id.isdecimal():
+            raise DirectError('无效的剧集 ID')
+        site='https://hongguoduanju.com'
+        url=site+'/detail?'+urlencode({'series_id':series_id})
+        headers={
+            'User-Agent':('Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) '
+                          'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+                          'Version/26.6 Mobile/15E148 Safari/604.1'),
+            'Referer':site+'/',
+            'Accept-Language':'zh-CN,zh;q=0.9',
+        }
+        last=None
+        for attempt in range(3):
+            try:
+                response=requests.get(self._url(url),headers=headers,timeout=self.timeout)
+                response.raise_for_status()
+                html=response.text
+                if len(html)>16*1024*1024:
+                    raise DirectError('官网详情响应超过16MiB')
+                start=html.find('_ROUTER_DATA')
+                if start<0:
+                    raise DirectError('官网页面没有 _ROUTER_DATA')
+                start=html.find('{',start)
+                if start<0:
+                    raise DirectError('官网页面没有可解析的数据对象')
+                root,_=json.JSONDecoder().raw_decode(html[start:])
+                loader=root.get('loaderData') if isinstance(root,dict) else None
+                if not isinstance(loader,dict):
+                    raise DirectError('官网缺少 loaderData')
+                info=next((x.get('seriesDetail') for x in loader.values()
+                           if isinstance(x,dict) and isinstance(x.get('seriesDetail'),dict)),None)
+                if not isinstance(info,dict):
+                    raise DirectError('官网没有提供 seriesDetail')
+                vid_list=info.get('vid_list')
+                if not isinstance(vid_list,list) or not vid_list:
+                    raise DirectError('官网没有提供 vid_list')
+                ids=[str(vid) for vid in vid_list]
+                if any(not vid.isdecimal() for vid in ids) or len(set(ids))!=len(ids):
+                    raise DirectError('官网 vid_list ID 无效或重复')
+                videos=[{'vid':vid,'vid_index':i,'title':f'第{i}集'}
+                        for i,vid in enumerate(ids,1)]
+                detail={
+                    'series_id_str':series_id,
+                    'series_title':str(info.get('series_name') or info.get('series_title') or series_id),
+                    'series_intro':str(info.get('series_intro') or ''),
+                    'episode_cnt':int(info.get('episode_cnt') or len(videos)),
+                    'video_list':videos,
+                    'hot_score':info.get('hot_score'),
+                    'series_sub_title_list':info.get('series_sub_title_list') or [],
+                }
+                return {'code':0,'data':{series_id:{'video_data':detail}}}
+            except (requests.RequestException, ValueError, TypeError, DirectError) as exc:
+                last=exc
+                if attempt<2:
+                    time.sleep(.3*(attempt+1))
+        raise DirectError('官网详情读取失败：'+str(last))
 
     def directory(self,series_id):
         esc=quote_plus
         url=('https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/directory/all_items/v?'
              +f'book_type=0&item_data_list_md5=&catalog_data_md5=&book_id={esc(series_id)}'+DIRECTORY_SUFFIX)
         return self.request(url,headers={'User-Agent':'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'})
+
+    def upstream_info(self, series_id):
+        """Reproduce the original novel-sound video_detail request with its device pool.
+
+        This is an isolated compatibility fallback; existing working 73932
+        requests, scene variants, V5 signing and files are unchanged.
+        """
+        body=json_body({'series_id':str(series_id),'biz_param':{
+            'device_level':3,'need_all_video_definition':True,
+            'need_mp4_align':False,'source':5,
+            'use_os_player':False,'video_id_type':1}})
+        return self.request(
+            UPSTREAM_DETAIL_URL,method='POST',body=body,device_app_id='1967',
+            headers={'User-Agent':UPSTREAM_DETAIL_UA,
+                     'Accept':'application/json; charset=utf-8,application/x-protobuf',
+                     'Content-Type':'application/json','x-xs-from-web':'0',
+                     'sdk-version':'2'})
 
     def info(self,series_id):
         body=json_body({'series_id':str(series_id),'biz_param':{'device_level':3,
@@ -506,18 +816,26 @@ class DirectClient:
         base='https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1'
         last=None
         for i in range(2):
-            dev=self.pool.get()
+            dev=self.pool.get(app_id='8662')
             url,headers=sign_v5(base,body,dev)
+            headers['x-ss-dp']='8662'
+            headers['lc']='101'
+            if dev.get('ttreq'):
+                headers['Cookie']=('passport_csrf_token=; passport_csrf_token_default=; '
+                                   'store-region='+str(dev.get('store_region') or '')+'; '
+                                   'store-region-src='+str(dev.get('store_region_src') or '')+'; '
+                                   'install_id='+str(dev['install_id'])+'; '
+                                   'ttreq='+str(dev['ttreq']))
             try:
                 response=requests.post(self._url(url),headers=headers,data=body,timeout=self.timeout)
                 if response.status_code in (401,403):
-                    self.pool.replace_rejected(dev['device_id'])
+                    self.pool.replace_rejected(dev['device_id'],app_id='8662')
                     raise DirectError('V5设备鉴权失败，已尝试替换或注册')
                 response.raise_for_status()
                 data=response.json()
                 if not isinstance(data,dict):raise DirectError('V5没有返回JSON对象')
                 if str(data.get('code')) in ('401','403'):
-                    self.pool.replace_rejected(dev['device_id'])
+                    self.pool.replace_rejected(dev['device_id'],app_id='8662')
                     raise DirectError('V5业务响应拒绝设备，已尝试替换或注册')
                 if data.get('success') is False or data.get('code') not in (None,0,'0',200,'200'):
                     raise DirectError(str(data.get('message') or data.get('error') or data.get('code')))

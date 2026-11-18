@@ -101,6 +101,35 @@ class DirectPoolAdapter:
             return self.client.source(m.group(1))
         raise DramaError(f'未知接口路径：{path}')
 
+    def search_heats(self, ids):
+        """Fill missing heat using the upstream player detail, 10 IDs per call."""
+        ids = list(dict.fromkeys(str(x) for x in ids if str(x).isdigit()))
+        resolved = {}
+        if not ids:
+            return resolved
+        for start in range(0, len(ids), 10):
+            chunk = ids[start:start + 10]
+            try:
+                details = self.client.series_heat_batch(chunk)
+            except (requests.RequestException, DirectError, ValueError, TypeError):
+                details = {}
+            for sid in chunk:
+                heat = heat_from_series_detail(details.get(sid))
+                if heat:
+                    resolved[sid] = heat
+        missing = [sid for sid in ids if sid not in resolved]
+        if missing:
+            def fetch_one(sid):
+                try:
+                    return sid, heat_from_series_detail(self.client.info(sid))
+                except (requests.RequestException, DirectError, ValueError, TypeError):
+                    return sid, ""
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(missing))) as executor:
+                for sid, heat in executor.map(fetch_one, missing):
+                    if heat:
+                        resolved[sid] = heat
+        return resolved
+
     def health(self):
         count = len(self.devices.status())
         return [{'name': 'Python直接连接上游', 'status': 'ok' if count else 'empty',
@@ -180,6 +209,8 @@ def parse_short_drama_episodes(payload: dict, series_id: str) -> list[Episode]:
     """Parse the short-drama video_list using real vid_index, never list position."""
     data = payload.get('data') if isinstance(payload, dict) else None
     series = data.get(str(series_id)) if isinstance(data, dict) else None
+    if not isinstance(series, dict) and isinstance(data, dict):
+        series = data  # single video_detail response: data.video_data
     video = series.get('video_data') if isinstance(series, dict) else None
     rows = video.get('video_list') if isinstance(video, dict) else None
     if isinstance(rows, dict):
@@ -265,6 +296,41 @@ def search_metric(item: dict, parent: dict, kind: str) -> str:
             return str(value).strip()
     return ""
 
+
+
+def heat_from_series_detail(payload: dict) -> str:
+    """Use official heat text / hot_score, never play counts."""
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data", payload)
+    sources = []
+    if isinstance(data, dict):
+        sources.append(data)
+        sources.extend(value for value in data.values() if isinstance(value, dict))
+    for source in sources:
+        video = source.get("video_data")
+        if not isinstance(video, dict):
+            continue
+        captions = video.get("series_sub_title_list")
+        if isinstance(captions, list):
+            for caption in captions:
+                if isinstance(caption, str) and "热度" in caption and caption.strip():
+                    return caption.strip()
+        raw = video.get("hot_score")
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, str) and "热度" in raw:
+            return raw.strip()
+        try:
+            number = int(raw)
+        except (ValueError, TypeError):
+            continue
+        if number < 0:
+            continue
+        if number >= 10000:
+            return f"{number / 10000:.2f}".rstrip("0").rstrip(".") + "万热度"
+        return f"{number}热度"
+    return ""
 
 def search_display_heat(item: dict) -> str:
     """Always include a heat slot; do not substitute a play count."""
@@ -829,6 +895,11 @@ def main(argv=None) -> int:
         if errors:
             for error in errors:
                 print(f"[搜索提醒] {error}")
+        ids_missing_heat = [sid for sid, row in results.items() if not row.get("heat")]
+        if ids_missing_heat:
+            for sid, heat in pool.search_heats(ids_missing_heat).items():
+                if sid in results and heat:
+                    results[sid]["heat"] = heat
         for i, item in enumerate(results.values(), 1):
             print(f"{i:02d}. {item['title']}  ID={item['series_id']}"
                   f"  集数={item['episodes'] or '?'}  {search_display_heat(item)}")

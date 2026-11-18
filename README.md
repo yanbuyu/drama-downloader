@@ -22,8 +22,11 @@ pip install -r requirements.txt
 # 搜索短剧
 python drama_downloader.py search "剧名"
 
-# 搜索多页
+# 搜索多页（默认合并综合和短剧标签，搜索结果末尾显示上游热度）
 python drama_downloader.py search "剧名" --pages 3
+
+# 只搜索某个上游标签（如 1=综合、11=短剧）
+python drama_downloader.py search "剧名" --tab 1
 
 # 查看作品信息与全集目录
 python drama_downloader.py info 作品ID
