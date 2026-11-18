@@ -247,7 +247,7 @@ def generate_local_device(app_id='1967') -> dict:
 
 class DevicePool:
     """可导入什锦铺原始 JSON 池，自动注册并轮询，线程安全落盘。"""
-    def __init__(self,path:str,desired=2,mock_origin=None):
+    def __init__(self,path:str,desired=5,mock_origin=None):
         self.path=Path(path)
         self.desired=desired
         self.mock_origin=mock_origin
@@ -274,13 +274,43 @@ class DevicePool:
         except OSError: pass
         os.replace(temp,self.path)
 
-    def ensure(self, count=None):
-        """Explicit prefill: try registration; use local IDs if unavailable."""
+    def ensure(self, count=None, *, app_id='1967'):
+        """Fill the app-specific device cache; Phoenix always uses real registrations.
+
+        Existing novel-app (1967) callers keep their legacy local-candidate
+        fallback. Playback (8662) never counts generated IDs as registered.
+        """
         n=self.desired if count is None else count
         if not 1<=n<=20: raise DirectError('设备池数量需在 1–20')
+        app_id=str(app_id)
+        if app_id not in ('1967','8662'):
+            raise DirectError('未知设备应用类型：'+app_id)
         with self._lock:
+            if app_id=='8662':
+                active=lambda: [d for d in self._devices
+                    if str(d.get('app_id','1967'))=='8662'
+                    and d.get('origin')=='server_registered']
+                while len(active())<n:
+                    # Do not silently fall back to an unregistered random ID.
+                    device=register_device(mock_origin=self.mock_origin,app_id='8662')
+                    if not str(device.get('device_id','')).strip() or not str(device.get('install_id','')).strip():
+                        raise DirectError('红果设备注册未返回有效设备ID')
+                    device=dict(device)
+                    device['app_id']='8662'
+                    device['origin']='server_registered'
+                    device.setdefault('status','active')
+                    device.setdefault('server_verified',False)
+                    if any(d['device_id']==device['device_id'] for d in self._devices):
+                        raise DirectError('红果设备注册返回重复设备ID')
+                    self._devices.append(device)
+                    self._save()
+                return len(active())
+
+            # Preserve previous novel-app behavior for existing callers.
             registration_failed=False
-            while len(self._devices)<n:
+            active_1967=lambda: [d for d in self._devices
+                 if str(d.get('app_id','1967'))=='1967']
+            while len(active_1967())<n:
                 if not registration_failed:
                     try:
                         device=register_device(mock_origin=self.mock_origin)
@@ -297,15 +327,28 @@ class DevicePool:
             return len(self._devices)
 
     def get(self, app_id='1967'):
-        """Reuse identities registered for this app; never cross-use novel and Phoenix IDs."""
+        """Prefer cached real Phoenix identities, register once on an empty pool."""
         app_id=str(app_id)
         with self._lock:
-            same=[d for d in self._devices if str(d.get('app_id','1967'))==app_id]
-            if not same:
-                device=generate_local_device() if app_id=='1967' else generate_local_device(app_id=app_id)
-                self._devices.append(device)
-                self._save()
-                same=[device]
+            if app_id=='8662':
+                same=[d for d in self._devices
+                      if str(d.get('app_id','1967'))=='8662'
+                      and d.get('origin')=='server_registered']
+                if not same:
+                    # First use: register --devices count, then persist locally.
+                    # An existing registered device (e.g. the Actions prefill)
+                    # is reused without registering the remaining default slots.
+                    self.ensure(self.desired,app_id='8662')
+                    same=[d for d in self._devices
+                          if str(d.get('app_id','1967'))=='8662'
+                          and d.get('origin')=='server_registered']
+            else:
+                same=[d for d in self._devices if str(d.get('app_id','1967'))==app_id]
+                if not same:
+                    device=generate_local_device(app_id=app_id)
+                    self._devices.append(device)
+                    self._save()
+                    same=[device]
             device=same[self._seq%len(same)]
             self._seq+=1
             device['use_count']=int(device.get('use_count',0))+1
@@ -325,17 +368,21 @@ class DevicePool:
         with self._lock:
             self._devices=[d for d in self._devices if d['device_id']!=device_id]
             self._save()
-            others=[d for d in self._devices if str(d.get('app_id','1967'))==app_id]
+            others=[d for d in self._devices
+                    if str(d.get('app_id','1967'))==app_id
+                    and (app_id!='8662' or d.get('origin')=='server_registered')]
             if others:
                 return dict(others[0])
             try:
                 if app_id=='1967':
                     device=register_device(mock_origin=self.mock_origin)
                 else:
-                    device=register_device(mock_origin=self.mock_origin,app_id=app_id)
+                    device=register_device(mock_origin=self.mock_origin,app_id='8662')
                 device.setdefault('origin','server_registered')
             except (DirectError, requests.RequestException):
-                device=generate_local_device() if app_id=='1967' else generate_local_device(app_id=app_id)
+                if app_id=='8662':
+                    raise
+                device=generate_local_device()
             device.setdefault('app_id',app_id)
             device.setdefault('server_verified',False)
             self._devices.append(device)

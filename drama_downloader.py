@@ -802,14 +802,15 @@ class Downloader:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="独立 Python 红果短剧下载器（不依赖Rust/Frida/原App）")
-    parser.add_argument("--pool", default="device_pool.json", help="设备池JSON（默认 device_pool.json；可导入原项目未加密的池）")
+    parser.add_argument("--pool", default=str(Path(__file__).resolve().with_name("device_pool.json")), help="设备池JSON（默认脚本所在项目的 device_pool.json；可导入旧设备池）")
     parser.add_argument("--out", default="downloads", help="视频保存目录")
-    parser.add_argument("--devices", type=int, default=5, help="自动维护的有效设备数量，默认5（原仓库最多20）")
+    parser.add_argument("--devices", type=int, default=5, help="首次注册红果播放设备数量，默认5（1–20；已有注册缓存优先复用）")
     parser.add_argument("--mock-origin", help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="离线运行协议签名/加密固定向量测试")
     sub.add_parser("devices", help="查看当前已注册设备池")
-    reg = sub.add_parser("register", help="直接向上游注册设备并保存到池中")
+    reg = sub.add_parser("register", help="注册指定数量的真实设备并缓存（默认红果播放设备）")
+    reg.add_argument("--app", choices=("8662","1967"), default="8662", help="设备应用类型：8662红果播放（默认）；1967原有番茄设备")
     search = sub.add_parser("search", help="按名称搜索短剧")
     search.add_argument("keyword")
     search.add_argument("--pages", type=int, default=1)
@@ -856,14 +857,16 @@ def main(argv=None) -> int:
         print(json.dumps(devices.status(), ensure_ascii=False, indent=2))
         return 0
     if args.command == "register":
-        devices.ensure(args.devices)
-        counts = devices.status()
-        verified = sum(bool(d['server_verified']) for d in counts)
-        registered = sum(d['origin'] == 'server_registered' for d in counts)
-        print(f"设备池已准备：{len(counts)} 个（已验证 {verified}，已注册来源 {registered}，其余为本地候选）；{args.pool}")
+        count = devices.ensure(args.devices, app_id=args.app)
+        counts = [d for d in devices.status() if d['app_id']==args.app]
+        registered = sum(d['origin']=='server_registered' for d in counts)
+        verified = sum(d['server_verified'] for d in counts)
+        print(f"{args.app}设备池：当前 {count} 个；服务器注册 {registered} 个，已取流验证 {verified} 个；缓存：{args.pool}")
         return 0
-    # Reuse existing pool records without registration; DirectClient only
-    # requests a new registration after upstream authentication rejection.
+    # Playback (8662) automatically fills a missing device pool with real,
+    # server-registered identities; existing cached registrations are reused.
+    # The established Actions workflow pre-registers one Phoenix device and
+    # continues to use it without additional registrations.
     pool = DirectPoolAdapter(devices, mock_origin=args.mock_origin)
     app = Downloader(pool, Path(args.out), getattr(args, "workers", 4), getattr(args, "quality", "best"), getattr(args, "raw", False))
     if args.command == "search":
