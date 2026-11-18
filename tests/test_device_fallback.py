@@ -112,6 +112,17 @@ class DeviceReuseTests(unittest.TestCase):
         self.assertEqual(client.pool.status()[0]["device_id"], make_local(2)["device_id"])
         self.assertTrue(client.pool.status()[0]["server_verified"])
 
+    def test_explicit_prefill_falls_back_to_local_on_registration_error(self):
+        pool = DevicePool(self.filename, desired=3)
+        candidates = [make_local(1), make_local(2), make_local(3)]
+        with patch("drama_direct.register_device", side_effect=DirectError("offline")) as reg, \
+                patch("drama_direct.generate_local_device", side_effect=candidates) as generate:
+            self.assertEqual(pool.ensure(), 3)
+        reg.assert_called_once()
+        self.assertEqual(generate.call_count, 3)
+        self.assertTrue(all(x["origin"] == "local_generated" for x in pool.status()))
+        self.assertTrue(all(not x["server_verified"] for x in pool.status()))
+
     def test_business_auth_code_also_triggers_recovery(self):
         client = self.client()
         with patch("drama_direct.generate_local_device", return_value=make_local(1)), \
