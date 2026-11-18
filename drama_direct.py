@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """红果短剧直连上游的 Python 客户端 (GPL-3.0)，无需什锦铺 App/Rust/Frida。
 移植自 https://github.com/ch6vip/novel-sound 的注册、搜索、目录、详情和 V5 取流。
-上游协议随时可能变动；不触及账号付费权限，也不会把错误回包当成功。
+按原协议处理上游的内容响应；错误回包保留真实失败状态。
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def reg_params(info):
 
 
 def register_device(*, mock_origin: str|None=None, timeout=20)->dict:
-    """只执行上游公开设备注册，保存正式返回的 ID；失败绝不伪造设备。"""
+    """执行上游 device_register，并读取服务端返回的设备标识。"""
     dev={'device_type':'MI 12','os_api':'29','os_version':'10','resolution':'1440*2392','dpi':'560',
          'cdid':str(uuid.uuid4()),'uuid':str(uuid.uuid4()),'clientudid':str(uuid.uuid4()),
          'openudid':secrets.token_hex(8),'version_code':VERSION,'version_name':'6.5.1.32'}
