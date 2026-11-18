@@ -710,7 +710,8 @@ def main(argv=None) -> int:
         devices.ensure(args.devices)
         print(f"设备注册完成，池内 {len(devices.status())} 个设备：{args.pool}")
         return 0
-    devices.ensure(args.devices)
+    # Reuse existing pool records without registration; DirectClient only
+    # requests a new registration after upstream authentication rejection.
     pool = DirectPoolAdapter(devices, mock_origin=args.mock_origin)
     app = Downloader(pool, Path(args.out), getattr(args, "workers", 4), getattr(args, "quality", "best"), getattr(args, "raw", False))
     if args.command == "search":
