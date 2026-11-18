@@ -708,7 +708,10 @@ def main(argv=None) -> int:
         return 0
     if args.command == "register":
         devices.ensure(args.devices)
-        print(f"设备注册完成，池内 {len(devices.status())} 个设备：{args.pool}")
+        counts = devices.status()
+        verified = sum(bool(d['server_verified']) for d in counts)
+        registered = sum(d['origin'] == 'server_registered' for d in counts)
+        print(f"设备池已准备：{len(counts)} 个（已验证 {verified}，已注册来源 {registered}，其余为本地候选）；{args.pool}")
         return 0
     # Reuse existing pool records without registration; DirectClient only
     # requests a new registration after upstream authentication rejection.
