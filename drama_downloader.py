@@ -4,7 +4,7 @@
 
 基于 ch6vip/novel-sound（GPL-3.0）公开源码移植；不依赖原App、Rust或Frida。
 依赖：pip install -r requirements.txt；自动查找系统 ffmpeg 或 imageio-ffmpeg 内置可执行文件。
-上游协议随时可能变化，必须实际联机验收；不绕过账号内容权限。
+按上游接口实际返回的数据处理，不增加针对付费或非付费内容的客户端筛选。
 """
 
 from __future__ import annotations
