@@ -214,8 +214,13 @@ class DevicePool:
             self._save()
             if self._devices:
                 return dict(self._devices[0])
-            device=register_device(mock_origin=self.mock_origin)
-            device.setdefault('origin','server_registered')
+            try:
+                device=register_device(mock_origin=self.mock_origin)
+                device.setdefault('origin','server_registered')
+            except (DirectError, requests.RequestException):
+                # When even registration is unavailable, keep trying a fresh
+                # local identity rather than inventing server verification.
+                device=generate_local_device()
             device.setdefault('server_verified',False)
             self._devices.append(device)
             self._save()
