@@ -173,13 +173,23 @@ class DevicePool:
         os.replace(temp,self.path)
 
     def ensure(self, count=None):
+        """Explicit prefill: try registration; use local IDs if unavailable."""
         n=self.desired if count is None else count
         if not 1<=n<=20: raise DirectError('设备池数量需在 1–20')
         with self._lock:
+            registration_failed=False
             while len(self._devices)<n:
-                device=register_device(mock_origin=self.mock_origin)
-                if any(x['device_id']==device['device_id'] for x in self._devices):
-                    raise DirectError('新注册设备与现有设备ID冲突')
+                if not registration_failed:
+                    try:
+                        device=register_device(mock_origin=self.mock_origin)
+                        device.setdefault('origin','server_registered')
+                    except (DirectError, requests.RequestException):
+                        registration_failed=True
+                if registration_failed or any(x['device_id']==device['device_id'] for x in self._devices):
+                    device=generate_local_device()
+                while any(x['device_id']==device['device_id'] for x in self._devices):
+                    device=generate_local_device()
+                device.setdefault('server_verified',False)
                 self._devices.append(device)
                 self._save()
             return len(self._devices)
